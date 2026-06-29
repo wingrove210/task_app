@@ -1,34 +1,48 @@
-from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
 from sqlalchemy import select
-from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from app.models.membership import Membership
+from app.models.project import Project
 from app.models.tag import Tag
 from app.models.task import Task
-from app.models.user import User
-from app.models.project import Project
+from app.models.user import User, UserRole
 from app.schemas.task import TaskCreate, TaskUpdate
 
 
-def create_task(db: Session, project_id: int, creator_id: int, data: TaskCreate):
-    # Validate project exists
+def _can_access_project(db: Session, project_id: int, current_user: User) -> bool:
+    if current_user.role == UserRole.admin:
+        return True
+
+    membership = (
+        db.query(Membership)
+        .filter(Membership.project_id == project_id, Membership.user_id == current_user.id)
+        .first()
+    )
+    return bool(membership)
+
+
+def create_task(db: Session, project_id: int, current_user: User, data: TaskCreate):
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=400, detail=f"Project with id {project_id} not found")
-    
-    # Validate creator exists
-    creator = db.get(User, creator_id)
+
+    if not _can_access_project(db, project_id, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    creator = db.get(User, current_user.id)
     if not creator:
-        raise HTTPException(status_code=400, detail=f"User with id {creator_id} not found")
-    
-    # Validate assignee exists if provided
+        raise HTTPException(status_code=400, detail=f"User with id {current_user.id} not found")
+
     if data.assignee_id:
         assignee = db.get(User, data.assignee_id)
         if not assignee:
             raise HTTPException(status_code=400, detail=f"User with id {data.assignee_id} not found")
-    
+
     task = Task(
         **data.model_dump(),
         project_id=project_id,
-        creator_id=creator_id,
+        creator_id=current_user.id,
     )
 
     db.add(task)
@@ -37,16 +51,29 @@ def create_task(db: Session, project_id: int, creator_id: int, data: TaskCreate)
     return task
 
 
-def get_task(db: Session, task_id: int):
-    return db.get(Task, task_id)
+def get_task(db: Session, task_id: int, current_user: User):
+    task = db.get(Task, task_id)
+    if not task:
+        return None
+
+    if not _can_access_project(db, task.project_id, current_user):
+        return None
+
+    return task
 
 
-def get_tasks_by_project(db: Session, project_id: int):
+def get_tasks_by_project(db: Session, project_id: int, current_user: User):
+    if not _can_access_project(db, project_id, current_user):
+        return []
+
     stmt = select(Task).where(Task.project_id == project_id)
     return db.scalars(stmt).all()
 
 
-def update_task(db: Session, task: Task, data: TaskUpdate):
+def update_task(db: Session, current_user: User, task: Task, data: TaskUpdate):
+    if not _can_access_project(db, task.project_id, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(task, key, value)
 
@@ -55,22 +82,19 @@ def update_task(db: Session, task: Task, data: TaskUpdate):
     return task
 
 
-def delete_task(db: Session, task: Task):
+def delete_task(db: Session, current_user: User, task: Task):
+    if not _can_access_project(db, task.project_id, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
     db.delete(task)
     db.commit()
-    
+
+
 def filter_tasks_by_tag(db, project_id: int, tag_name: str):
-
     return (
-
         db.query(Task)
-
         .join(Task.tags)
-
         .filter(Task.project_id == project_id)
-
         .filter(Tag.name == tag_name)
-
         .all()
-
     )

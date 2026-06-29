@@ -1,6 +1,8 @@
 from typing import Optional
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+
+from app.schemas.task import TaskResponse
 
 
 class ProjectBase(BaseModel):
@@ -19,6 +21,6 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(ProjectBase):
     id: int
+    tasks: list[TaskResponse] = Field(default_factory=list)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

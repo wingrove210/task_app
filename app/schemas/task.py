@@ -1,6 +1,9 @@
-from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.tag import TagResponse
 
 
 class TaskCreate(BaseModel):
@@ -36,8 +39,8 @@ class TaskResponse(BaseModel):
     project_id: int
     creator_id: int
     assignee_id: Optional[int]
+    tags: list[TagResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
