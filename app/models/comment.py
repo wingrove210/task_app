@@ -16,16 +16,14 @@ class Comment(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    content: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
 
-    author_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id")
-    )
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 
     task_id: Mapped[int] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE")
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False
     )
-
     author: Mapped["User"] = relationship(
         back_populates="comments"
     )

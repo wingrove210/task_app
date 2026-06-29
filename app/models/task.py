@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from sqlalchemy import (
     DateTime,
@@ -9,19 +9,12 @@ from sqlalchemy import (
     String,
     Text,
 )
-
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.enums import TaskPriority, TaskStatus
 from app.models.mixins import TimestampMixin
 from app.models.task_tag import task_tags
-
-if TYPE_CHECKING:
-    from app.models.comment import Comment
-    from app.models.project import Project
-    from app.models.tag import Tag
-    from app.models.user import User
 
 
 class Task(Base, TimestampMixin):
@@ -34,34 +27,34 @@ class Task(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    title: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    description: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-    )
+    description: Mapped[Optional[str]] = mapped_column(Text)
 
     status: Mapped[TaskStatus] = mapped_column(
-        Enum(TaskStatus),
+        Enum(TaskStatus, native_enum=False, name="task_status"),
         default=TaskStatus.TODO,
+        nullable=False,
     )
 
     priority: Mapped[TaskPriority] = mapped_column(
-        Enum(TaskPriority),
+        Enum(TaskPriority, native_enum=False, name="task_priority"),
         default=TaskPriority.MEDIUM,
+        nullable=False,
     )
 
     due_date: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
+        DateTime(timezone=True)
     )
 
     project_id: Mapped[int] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE")
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
     )
 
     creator_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id")
+        ForeignKey("users.id"),
+        nullable=False,
     )
 
     assignee_id: Mapped[Optional[int]] = mapped_column(
@@ -69,26 +62,20 @@ class Task(Base, TimestampMixin):
         nullable=True,
     )
 
-    project: Mapped["Project"] = relationship(
-        back_populates="tasks"
-    )
+    project = relationship("Project", back_populates="tasks")
 
-    creator: Mapped["User"] = relationship(
-        foreign_keys=[creator_id],
-        back_populates="created_tasks",
-    )
+    creator = relationship("User", foreign_keys=[creator_id])
 
-    assignee: Mapped["User"] = relationship(
-        foreign_keys=[assignee_id],
-        back_populates="assigned_tasks",
-    )
+    assignee = relationship("User", foreign_keys=[assignee_id])
 
-    comments: Mapped[list["Comment"]] = relationship(
+    comments = relationship(
+        "Comment",
         back_populates="task",
         cascade="all, delete-orphan",
     )
 
-    tags: Mapped[list["Tag"]] = relationship(
+    tags = relationship(
+        "Tag",
         secondary=task_tags,
         back_populates="tasks",
     )
