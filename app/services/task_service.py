@@ -2,12 +2,17 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.events.domain_events import TaskAssignedEvent, TaskCreatedEvent
+from app.events.event_bus import get_event_bus
+from app.integrations.redis_client import RedisClient
 from app.models.membership import Membership
 from app.models.project import Project
 from app.models.tag import Tag
 from app.models.task import Task
 from app.models.user import User, UserRole
 from app.schemas.task import TaskCreate, TaskUpdate
+
+redis_client = RedisClient()
 
 
 def _can_access_project(db: Session, project_id: int, current_user: User) -> bool:
@@ -48,6 +53,10 @@ def create_task(db: Session, project_id: int, current_user: User, data: TaskCrea
     db.add(task)
     db.commit()
     db.refresh(task)
+    get_event_bus().publish(TaskCreatedEvent(task_id=task.id, project_id=task.project_id, creator_id=task.creator_id, title=task.title))
+    if task.assignee_id:
+        get_event_bus().publish(TaskAssignedEvent(task_id=task.id, assignee_id=task.assignee_id, project_id=task.project_id))
+    redis_client.delete(f"tasks:project:{project_id}")
     return task
 
 
@@ -66,8 +75,14 @@ def get_tasks_by_project(db: Session, project_id: int, current_user: User):
     if not _can_access_project(db, project_id, current_user):
         return []
 
+    cached = redis_client.get_json(f"tasks:project:{project_id}")
+    if cached is not None:
+        return [db.get(Task, task_id) for task_id in cached if db.get(Task, task_id)]
+
     stmt = select(Task).where(Task.project_id == project_id)
-    return db.scalars(stmt).all()
+    tasks = db.scalars(stmt).all()
+    redis_client.set_json(f"tasks:project:{project_id}", [task.id for task in tasks], ttl_seconds=60)
+    return tasks
 
 
 def update_task(db: Session, current_user: User, task: Task, data: TaskUpdate):
@@ -79,6 +94,7 @@ def update_task(db: Session, current_user: User, task: Task, data: TaskUpdate):
 
     db.commit()
     db.refresh(task)
+    redis_client.delete(f"tasks:project:{task.project_id}")
     return task
 
 
@@ -88,6 +104,7 @@ def delete_task(db: Session, current_user: User, task: Task):
 
     db.delete(task)
     db.commit()
+    redis_client.delete(f"tasks:project:{task.project_id}")
 
 
 def filter_tasks_by_tag(db, project_id: int, tag_name: str):

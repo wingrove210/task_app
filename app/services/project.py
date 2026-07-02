@@ -1,11 +1,16 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.events.domain_events import ProjectCreatedEvent
+from app.events.event_bus import get_event_bus
+from app.integrations.redis_client import RedisClient
 from app.models.enums import ProjectRole
 from app.models.membership import Membership
 from app.models.project import Project
 from app.models.user import User, UserRole
 from app.schemas.project import ProjectCreate, ProjectUpdate
+
+redis_client = RedisClient()
 
 
 def create_project(db: Session, current_user: User, data: ProjectCreate):
@@ -21,19 +26,30 @@ def create_project(db: Session, current_user: User, data: ProjectCreate):
     db.add(membership)
     db.commit()
     db.refresh(project)
+    get_event_bus().publish(
+        ProjectCreatedEvent(project_id=project.id, owner_id=current_user.id, name=project.name)
+    )
+    redis_client.delete("projects:all")
     return project
 
 
 def get_projects(db: Session, current_user: User):
-    if current_user.role == UserRole.admin:
-        return db.query(Project).all()
+    cached = redis_client.get_json("projects:all") if current_user.role == UserRole.admin else None
+    if cached is not None:
+        return [db.get(Project, project_id) for project_id in cached if db.get(Project, project_id)]
 
-    return (
-        db.query(Project)
-        .join(Project.memberships)
-        .filter(Membership.user_id == current_user.id)
-        .all()
-    )
+    if current_user.role == UserRole.admin:
+        projects = db.query(Project).all()
+    else:
+        projects = (
+            db.query(Project)
+            .join(Project.memberships)
+            .filter(Membership.user_id == current_user.id)
+            .all()
+        )
+
+    redis_client.set_json("projects:all", [project.id for project in projects], ttl_seconds=60)
+    return projects
 
 
 def get_project(db: Session, project_id: int, current_user: User):
@@ -76,6 +92,7 @@ def update_project(db: Session, current_user: User, project: Project, data: Proj
 
     db.commit()
     db.refresh(project)
+    redis_client.delete("projects:all")
     return project
 
 
@@ -85,3 +102,4 @@ def delete_project(db: Session, current_user: User, project: Project):
 
     db.delete(project)
     db.commit()
+    redis_client.delete("projects:all")

@@ -1,19 +1,23 @@
 from fastapi import FastAPI
 
-from app.api.projects import router as projects_router
-from app.api.tasks import router as tasks_router
-from app.api.comments import router as comments_router
-from app.api.tags import router as tags_router
 from app.api import auth, users
-from app.db.session import SessionLocal
+from app.api.comments import router as comments_router
+from app.api.projects import router as projects_router
+from app.api.tags import router as tags_router
+from app.api.tasks import router as tasks_router
+from app.db.session import SessionLocal, init_db
+from app.integrations.rabbitmq import RabbitMQPublisher
+from app.integrations.redis_client import RedisClient
 from app.models.user import User
 from app.services.auth_service import get_password_hash
 
-app = FastAPI()
+app = FastAPI(title="Task Manager API")
 
 
 @app.on_event("startup")
-def create_default_users():
+def startup_event():
+    init_db()
+
     with SessionLocal() as db:
         defaults = [
             {
@@ -49,6 +53,11 @@ def create_default_users():
                 db.add(user)
         db.commit()
 
+    app.state.redis_client = RedisClient()
+    app.state.rabbitmq_publisher = RabbitMQPublisher()
+    app.state.redis_ready = app.state.redis_client.ping()
+    app.state.rabbitmq_ready = app.state.rabbitmq_publisher.healthcheck()
+
 
 app.include_router(projects_router)
 app.include_router(tasks_router)
@@ -60,4 +69,9 @@ app.include_router(users.router)
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "database": True,
+        "redis": getattr(app.state, "redis_ready", False),
+        "rabbitmq": getattr(app.state, "rabbitmq_ready", False),
+    }
