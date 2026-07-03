@@ -2,13 +2,17 @@ import json
 from typing import Optional
 
 import httpx
-import pika
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Form, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis import Redis
 from sqlalchemy.orm import Session
 
-from .core.config import Settings
-from .core.database import SessionLocal, Task, initialize
+from common.auth import get_current_user
+from common.events import publish_event
+from common.exceptions import NotFoundError, ValidationError
+from common.models import TaskCreateRequest, TaskPriority, TaskResponse, TaskStatus, TaskUpdateRequest
+from app.core.config import Settings
+from app.core.database import SessionLocal, Task, initialize
 
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
 
@@ -16,6 +20,7 @@ app = FastAPI(title="Task Service")
 
 
 def get_db():
+    """Database session dependency."""
     db = SessionLocal()
     try:
         yield db
@@ -23,86 +28,120 @@ def get_db():
         db.close()
 
 
-def get_current_user(authorization: Optional[str] = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="token required")
+security_scheme = HTTPBearer()
 
-    token = authorization.split(" ", 1)[1]
-    response = httpx.post(
-        f"{Settings.IDENTITY_SERVICE_URL}/internal/validate",
-        json={"token": token},
-        timeout=3.0,
+
+def get_current_user_dep(
+    credentials: HTTPAuthorizationCredentials = Security(security_scheme),
+):
+    """Get current user from token."""
+    return get_current_user(
+        Settings.IDENTITY_SERVICE_URL,
+        f"Bearer {credentials.credentials}",
     )
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="invalid token")
-
-    return response.json()
 
 
-def ensure_project_exists(project_id: int):
-    response = httpx.get(f"{Settings.PROJECT_SERVICE_URL}/internal/projects/{project_id}", timeout=3.0)
-    if response.status_code != 200:
-        raise HTTPException(status_code=404, detail="project not found")
-    return response.json()
-
-
-def publish_event(routing_key: str, payload: dict):
+def ensure_project_exists(project_id: int) -> dict:
+    """
+    Verify project exists with project service.
+    
+    Args:
+        project_id: Project ID to validate
+        
+    Returns:
+        Project data
+        
+    Raises:
+        NotFoundError: If project doesn't exist
+    """
     try:
-        connection = pika.BlockingConnection(
-            pika.ConnectionParameters(host=Settings.RABBITMQ_HOST, heartbeat=30)
+        response = httpx.get(
+            f"{Settings.PROJECT_SERVICE_URL}/internal/projects/{project_id}",
+            timeout=3.0,
         )
-        channel = connection.channel()
-        channel.exchange_declare(exchange="domain-events", exchange_type="topic", durable=True)
-        channel.basic_publish(
-            exchange="domain-events",
-            routing_key=routing_key,
-            body=json.dumps(payload).encode("utf-8"),
-            properties=pika.BasicProperties(delivery_mode=2),
-        )
-        connection.close()
-    except Exception:
-        return False
-    return True
+        
+        if response.status_code != 200:
+            raise NotFoundError("Project")
+        
+        return response.json()
+    except httpx.RequestError as exc:
+        raise NotFoundError("Project") from exc
 
 
 @app.on_event("startup")
 def startup_event() -> None:
+    """Initialize database on startup."""
     initialize()
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    """Health check endpoint."""
     return {"status": "ok", "service": "task"}
 
 
-@app.post("/projects/{project_id}/tasks", response_model=dict)
-def create_task(project_id: int, payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+@app.post("/projects/{project_id}/tasks", response_model=TaskResponse, status_code=201)
+def create_task(
+    project_id: int,
+    title: str = Form(...),
+    description: Optional[str] = Form(None),
+    status: TaskStatus = Form(TaskStatus.TODO),
+    priority: TaskPriority = Form(TaskPriority.MEDIUM),
+    assignee_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_dep),
+) -> dict:
+    """
+    Create a new task in a project.
+    
+    Args:
+        project_id: Project ID
+        title: Task title from form input
+        description: Optional task description from form input
+        status: Task status from form input
+        priority: Task priority from form input
+        assignee_id: Optional assignee ID from form input
+        db: Database session
+        current_user: Current authenticated user
+        
+    Returns:
+        Created task data
+    """
+    # Verify project exists
     ensure_project_exists(project_id)
-    title = payload.get("title")
-    if not title:
-        raise HTTPException(status_code=400, detail="title is required")
+
+    if not title or not title.strip():
+        raise ValidationError("Task title cannot be empty")
 
     task = Task(
-        title=title,
-        description=payload.get("description"),
+        title=title.strip(),
+        description=description.strip() if description else None,
+        status=status.value if status else "todo",
+        priority=priority.value if priority else "medium",
         project_id=project_id,
         creator_id=current_user["user_id"],
-        assignee_id=payload.get("assignee_id"),
+        assignee_id=assignee_id,
     )
     db.add(task)
     db.commit()
     db.refresh(task)
 
+    # Invalidate cache
     redis_client.delete(f"tasks:project:{project_id}")
+
+    # Publish domain event
     publish_event(
+        Settings.RABBITMQ_HOST,
         "task.created",
         {
             "task_id": task.id,
             "project_id": project_id,
             "creator_id": task.creator_id,
             "title": task.title,
+            "priority": task.priority,
         },
     )
+
     return {
         "id": task.id,
         "title": task.title,
@@ -111,16 +150,38 @@ def create_task(project_id: int, payload: dict, current_user=Depends(get_current
         "creator_id": task.creator_id,
         "assignee_id": task.assignee_id,
         "status": task.status,
+        "priority": task.priority,
+        "created_at": task.created_at.isoformat(),
+        "updated_at": task.updated_at.isoformat(),
     }
 
 
-@app.get("/projects/{project_id}/tasks", response_model=list[dict])
-def list_tasks(project_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+@app.get("/projects/{project_id}/tasks", response_model=list[TaskResponse])
+def list_tasks(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_dep),
+) -> list[dict]:
+    """
+    Get all tasks in a project.
+    
+    Args:
+        project_id: Project ID
+        db: Database session
+        current_user: Current authenticated user
+        
+    Returns:
+        List of tasks
+    """
+    # Verify project exists
     ensure_project_exists(project_id)
+
+    # Try to get from cache
     cached = redis_client.get(f"tasks:project:{project_id}")
     if cached:
         return json.loads(cached)
 
+    # Query from database
     tasks = db.query(Task).filter(Task.project_id == project_id).all()
     payload = [
         {
@@ -131,8 +192,13 @@ def list_tasks(project_id: int, current_user=Depends(get_current_user), db: Sess
             "creator_id": task.creator_id,
             "assignee_id": task.assignee_id,
             "status": task.status,
+            "priority": task.priority,
+            "created_at": task.created_at.isoformat(),
+            "updated_at": task.updated_at.isoformat(),
         }
         for task in tasks
     ]
+
+    # Cache results
     redis_client.set(f"tasks:project:{project_id}", json.dumps(payload), ex=60)
     return payload

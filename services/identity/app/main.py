@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Form, HTTPException
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -43,20 +43,22 @@ def health() -> dict[str, str]:
 
 
 @app.post("/auth/register", response_model=dict)
-def register(payload: dict, db: Session = Depends(get_db)):
-    email = payload.get("email")
-    password = payload.get("password")
-    full_name = payload.get("full_name", "")
-
+def register(
+    username: str = Form(...),
+    password: str = Form(...),
+    full_name: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    email = username.strip()
     if not email or not password:
-        raise HTTPException(status_code=400, detail="email and password are required")
+        raise HTTPException(status_code=400, detail="username and password are required")
 
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="email already registered")
 
     user = User(
         email=email,
-        full_name=full_name,
+        full_name=full_name or "",
         hashed_password=pwd_context.hash(password),
         role="member",
     )
@@ -69,10 +71,12 @@ def register(payload: dict, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login", response_model=dict)
-def login(payload: dict, db: Session = Depends(get_db)):
-    email = payload.get("email")
-    password = payload.get("password")
-
+def login(
+    username: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    email = username.strip()
     user = db.query(User).filter(User.email == email).first()
     if not user or not pwd_context.verify(password, user.hashed_password):
         raise HTTPException(status_code=401, detail="invalid credentials")

@@ -1,14 +1,17 @@
 import json
 from typing import Optional
 
-import httpx
-import pika
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Form, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis import Redis
 from sqlalchemy.orm import Session
 
-from .core.config import Settings
-from .core.database import Project, SessionLocal, initialize
+from common.auth import get_current_user
+from common.events import publish_event
+from common.exceptions import NotFoundError, ValidationError
+from common.models import ProjectCreateRequest, ProjectResponse, ProjectUpdateRequest
+from app.core.config import Settings
+from app.core.database import Project, SessionLocal, initialize
 
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
 
@@ -16,6 +19,7 @@ app = FastAPI(title="Project Service")
 
 
 def get_db():
+    """Database session dependency."""
     db = SessionLocal()
     try:
         yield db
@@ -23,65 +27,68 @@ def get_db():
         db.close()
 
 
-def get_current_user(authorization: Optional[str] = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="token required")
+security_scheme = HTTPBearer()
 
-    token = authorization.split(" ", 1)[1]
-    response = httpx.post(
-        f"{Settings.IDENTITY_SERVICE_URL}/internal/validate",
-        json={"token": token},
-        timeout=3.0,
+
+def get_current_user_dep(
+    credentials: HTTPAuthorizationCredentials = Security(security_scheme),
+):
+    """Get current user from token."""
+    return get_current_user(
+        Settings.IDENTITY_SERVICE_URL,
+        f"Bearer {credentials.credentials}",
     )
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="invalid token")
-
-    return response.json()
-
-
-def publish_event(routing_key: str, payload: dict):
-    try:
-        connection = pika.BlockingConnection(
-            pika.ConnectionParameters(host=Settings.RABBITMQ_HOST, heartbeat=30)
-        )
-        channel = connection.channel()
-        channel.exchange_declare(exchange="domain-events", exchange_type="topic", durable=True)
-        channel.basic_publish(
-            exchange="domain-events",
-            routing_key=routing_key,
-            body=json.dumps(payload).encode("utf-8"),
-            properties=pika.BasicProperties(delivery_mode=2),
-        )
-        connection.close()
-    except Exception:
-        return False
-    return True
 
 
 @app.on_event("startup")
 def startup_event() -> None:
+    """Initialize database on startup."""
     initialize()
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    """Health check endpoint."""
     return {"status": "ok", "service": "project"}
 
 
-@app.post("/projects", response_model=dict)
-def create_project(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    name = payload.get("name")
-    description = payload.get("description")
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
+@app.post("/projects", response_model=ProjectResponse, status_code=201)
+def create_project(
+    name: str = Form(...),
+    description: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_dep),
+) -> dict:
+    """
+    Create a new project.
+    
+    Args:
+        name: Project name from form input
+        description: Optional project description from form input
+        db: Database session
+        current_user: Current authenticated user
+        
+    Returns:
+        Created project data
+    """
+    if not name or not name.strip():
+        raise ValidationError("Project name cannot be empty")
 
-    project = Project(name=name, description=description, owner_id=current_user["user_id"])
+    project = Project(
+        name=name.strip(),
+        description=description.strip() if description else None,
+        owner_id=current_user["user_id"],
+    )
     db.add(project)
     db.commit()
     db.refresh(project)
 
+    # Invalidate cache
     redis_client.delete("projects:all")
+
+    # Publish domain event
     publish_event(
+        Settings.RABBITMQ_HOST,
         "project.created",
         {
             "project_id": project.id,
@@ -98,24 +105,65 @@ def create_project(payload: dict, current_user=Depends(get_current_user), db: Se
     }
 
 
-@app.get("/projects", response_model=list[dict])
-def list_projects(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+@app.get("/projects", response_model=list[ProjectResponse])
+def list_projects(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_dep),
+) -> list[dict]:
+    """
+    List all projects for current user.
+    
+    Args:
+        db: Database session
+        current_user: Current authenticated user
+        
+    Returns:
+        List of projects
+    """
+    # Try to get from cache
     cached = redis_client.get("projects:all")
     if cached:
         return json.loads(cached)
 
+    # Query from database
     projects = db.query(Project).filter(Project.owner_id == current_user["user_id"]).all()
     payload = [
-        {"id": project.id, "name": project.name, "description": project.description, "owner_id": project.owner_id}
+        {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "owner_id": project.owner_id,
+        }
         for project in projects
     ]
+
+    # Cache results
     redis_client.set("projects:all", json.dumps(payload), ex=60)
     return payload
 
 
-@app.get("/internal/projects/{project_id}", response_model=dict)
-def internal_project(project_id: int, db: Session = Depends(get_db)):
+@app.get("/internal/projects/{project_id}", response_model=ProjectResponse)
+def internal_get_project(project_id: int, db: Session = Depends(get_db)) -> dict:
+    """
+    Internal endpoint to validate project exists (for other services).
+    
+    Args:
+        project_id: Project ID
+        db: Database session
+        
+    Returns:
+        Project data
+        
+    Raises:
+        NotFoundError: If project doesn't exist
+    """
     project = db.get(Project, project_id)
     if not project:
-        raise HTTPException(status_code=404, detail="project not found")
-    return {"id": project.id, "owner_id": project.owner_id, "name": project.name}
+        raise NotFoundError("Project")
+    
+    return {
+        "id": project.id,
+        "owner_id": project.owner_id,
+        "name": project.name,
+        "description": project.description,
+    }
