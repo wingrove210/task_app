@@ -9,10 +9,18 @@ services:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/task_manager_identity
       JWT_SECRET: dev-secret
       JWT_ALGORITHM: HS256
+      SMTP_HOST: "${SMTP_HOST:-mailhog}"
+      SMTP_PORT: "${SMTP_PORT:-1025}"
+      SMTP_USERNAME: "${SMTP_USERNAME:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_USE_TLS: "${SMTP_USE_TLS:-false}"
+      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-no-reply@taskmanager.local}"
+      SMTP_FROM_NAME: "${SMTP_FROM_NAME:-Task Manager}"
     depends_on:
       - db
       - redis
       - rabbitmq
+      - mailhog
 
   project:
     build:
@@ -25,11 +33,19 @@ services:
       IDENTITY_SERVICE_URL: http://identity:8000
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_HOST: rabbitmq
+      PROJECT_INVITE_BASE_URL: http://localhost:8002/projects/invitations/accept
+      SMTP_HOST: "${SMTP_HOST:-mailhog}"
+      SMTP_PORT: "${SMTP_PORT:-1025}"
+      SMTP_USERNAME: "${SMTP_USERNAME:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_USE_TLS: "${SMTP_USE_TLS:-false}"
+      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-no-reply@taskmanager.local}"
     depends_on:
       - db
       - redis
       - rabbitmq
       - identity
+      - mailhog
 
   task:
     build:
@@ -76,8 +92,12 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025:1025"
+      - "8025:8025"
 
 volumes:
   postgres_data:

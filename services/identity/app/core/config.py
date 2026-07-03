@@ -8,3 +8,11 @@ class Settings:
     )
     JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret")
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+    SMTP_HOST = os.getenv("SMTP_HOST", "")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "0") or 0)
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+    SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "false").lower() == "true"
+    SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "no-reply@taskmanager.local")
+    SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Task Manager")
+    APP_NAME = os.getenv("APP_NAME", "Task Manager")

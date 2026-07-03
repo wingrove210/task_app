@@ -82,6 +82,43 @@ class ProjectResponse(BaseModel):
         from_attributes = True
 
 
+class ProjectCollaboratorRole(str, Enum):
+    """Possible collaborator roles within a project."""
+
+    VIEWER = "viewer"
+    EDITOR = "editor"
+    ADMIN = "admin"
+
+
+class ProjectInviteRequest(BaseModel):
+    """Request model for inviting a collaborator to a project."""
+
+    email: str = Field(..., description="Email address of the collaborator")
+    role: ProjectCollaboratorRole = Field(
+        default=ProjectCollaboratorRole.EDITOR,
+        description="Initial role for the collaborator",
+    )
+
+
+class ProjectCollaboratorResponse(BaseModel):
+    """Response model for a project collaborator."""
+
+    id: int
+    project_id: int
+    user_id: int
+    email: str
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectCollaboratorUpdateRequest(BaseModel):
+    """Request model for updating a collaborator role."""
+
+    role: ProjectCollaboratorRole = Field(..., description="Updated collaborator role")
+
+
 class TaskCreateRequest(BaseModel):
     """Request model for creating a task."""
 
