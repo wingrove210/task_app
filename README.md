@@ -1,12 +1,12 @@
 # Task Manager API
 
-This repository now follows a cleaner microservice-oriented layout with explicit service boundaries, shared infrastructure, and a more maintainable structure for future growth.
+This repository now uses a microservice-first architecture only. The legacy monolithic application layer has been removed, and the system is composed of three focused services.
 
 ## Services
 
 - Identity service: authentication, registration, and JWT validation on port 8001
-- Project service: project CRUD and ownership rules on port 8002
-- Task service: task CRUD and project-level task access on port 8003
+- Project service: project creation and ownership rules on port 8002
+- Task service: task creation and project-scoped task access on port 8003
 
 ## Local development
 
@@ -33,6 +33,6 @@ make test
 
 ## Architecture notes
 
-The service code is now organized around a small shared bootstrap layer under services/common, with each service keeping its own config and database wiring under its app/core package.
+Each service owns its own domain logic and persistence model in its own app package, while shared bootstrap concerns live in services/common.
 See [docs/architecture.md](docs/architecture.md) for a short overview.
 

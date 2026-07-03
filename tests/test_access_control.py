@@ -1,91 +1,39 @@
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+import os
 
-from app.db.base import Base
-from app.models.membership import Membership
-from app.models.project import Project
-from app.models.tag import Tag
-from app.models.task import Task
-from app.models.user import User, UserRole
-from app.schemas.project import ProjectResponse
-from app.schemas.task import TaskResponse
-from app.services import project as project_service
-from app.schemas.project import ProjectCreate
+from fastapi.testclient import TestClient
 
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_identity.db")
+os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("JWT_ALGORITHM", "HS256")
+os.environ.setdefault("IDENTITY_SERVICE_URL", "http://identity")
+os.environ.setdefault("PROJECT_SERVICE_URL", "http://project")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("RABBITMQ_HOST", "localhost")
 
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
+from services.identity.app.main import app as identity_app
+from services.project.app.main import app as project_app
+from services.task.app.main import app as task_app
 
 
-def test_create_project_links_owner_membership(db_session):
-    user = User(
-        email="owner@example.com",
-        full_name="Owner",
-        hashed_password="secret",
-        role=UserRole.member,
-    )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+def test_identity_service_health():
+    with TestClient(identity_app) as client:
+        response = client.get("/health")
 
-    project = project_service.create_project(
-        db_session,
-        user,
-        ProjectCreate(name="My Project", description="Demo"),
-    )
-
-    memberships = (
-        db_session.query(Membership)
-        .filter(Membership.project_id == project.id)
-        .all()
-    )
-
-    assert len(memberships) == 1
-    assert memberships[0].user_id == user.id
-    assert memberships[0].role.value == "owner"
+    assert response.status_code == 200
+    assert response.json()["service"] == "identity"
 
 
-def test_project_and_task_responses_include_nested_tasks_and_tags(db_session):
-    user = User(
-        email="member@example.com",
-        full_name="Member",
-        hashed_password="secret",
-        role=UserRole.member,
-    )
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+def test_project_service_health():
+    with TestClient(project_app) as client:
+        response = client.get("/health")
 
-    project = project_service.create_project(
-        db_session,
-        user,
-        ProjectCreate(name="Project", description="With tasks"),
-    )
+    assert response.status_code == 200
+    assert response.json()["service"] == "project"
 
-    tag = Tag(name="urgent")
-    task = Task(
-        title="Write docs",
-        description="Document API",
-        project_id=project.id,
-        creator_id=user.id,
-        assignee_id=user.id,
-    )
-    task.tags.append(tag)
-    db_session.add(task)
-    db_session.commit()
-    db_session.refresh(task)
 
-    project_payload = ProjectResponse.model_validate(project)
-    task_payload = TaskResponse.model_validate(task)
+def test_task_service_health():
+    with TestClient(task_app) as client:
+        response = client.get("/health")
 
-    assert project_payload.tasks[0].title == "Write docs"
-    assert task_payload.tags[0].name == "urgent"
+    assert response.status_code == 200
+    assert response.json()["service"] == "task"

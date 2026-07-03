@@ -1,7 +1,8 @@
 from sqlalchemy import Column, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase
 
-from common.database import build_session_factory, create_sqlalchemy_engine, initialize_database
+from services.common.database import build_session_factory, create_sqlalchemy_engine, initialize_database
+
 from .config import Settings
 
 
