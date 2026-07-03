@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .core.config import Settings
 from .core.database import SessionLocal, User, initialize
+from .schemas import RegisterRequest, LoginRequest
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -43,7 +44,7 @@ def health() -> dict[str, str]:
 
 
 @app.post("/auth/register", response_model=dict)
-def register(payload: dict, db: Session = Depends(get_db)):
+def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     email = payload.get("email")
     password = payload.get("password")
     full_name = payload.get("full_name", "")
@@ -69,7 +70,7 @@ def register(payload: dict, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login", response_model=dict)
-def login(payload: dict, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
     email = payload.get("email")
     password = payload.get("password")
 

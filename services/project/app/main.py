@@ -3,12 +3,14 @@ from typing import Optional
 
 import httpx
 import pika
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from redis import Redis
 from sqlalchemy.orm import Session
 
 from .core.config import Settings
 from .core.database import Project, SessionLocal, initialize
+from services.common.auth import get_current_user
+from .schemas import ProjectCreate, ProjectOut
 
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
 
@@ -68,14 +70,9 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "project"}
 
 
-@app.post("/projects", response_model=dict)
-def create_project(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    name = payload.get("name")
-    description = payload.get("description")
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-
-    project = Project(name=name, description=description, owner_id=current_user["user_id"])
+@app.post("/projects", response_model=ProjectOut)
+def create_project(payload: ProjectCreate, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    project = Project(name=payload.name, description=payload.description, owner_id=current_user["user_id"])
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -90,12 +87,7 @@ def create_project(payload: dict, current_user=Depends(get_current_user), db: Se
         },
     )
 
-    return {
-        "id": project.id,
-        "name": project.name,
-        "description": project.description,
-        "owner_id": project.owner_id,
-    }
+    return ProjectOut.from_orm(project)
 
 
 @app.get("/projects", response_model=list[dict])

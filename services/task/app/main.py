@@ -3,12 +3,14 @@ from typing import Optional
 
 import httpx
 import pika
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from redis import Redis
 from sqlalchemy.orm import Session
 
 from .core.config import Settings
 from .core.database import SessionLocal, Task, initialize
+from services.common.auth import get_current_user
+from .schemas import TaskCreate, TaskOut
 
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
 
@@ -75,19 +77,15 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "task"}
 
 
-@app.post("/projects/{project_id}/tasks", response_model=dict)
-def create_task(project_id: int, payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+@app.post("/projects/{project_id}/tasks", response_model=TaskOut)
+def create_task(project_id: int, payload: TaskCreate, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     ensure_project_exists(project_id)
-    title = payload.get("title")
-    if not title:
-        raise HTTPException(status_code=400, detail="title is required")
-
     task = Task(
-        title=title,
-        description=payload.get("description"),
+        title=payload.title,
+        description=payload.description,
         project_id=project_id,
         creator_id=current_user["user_id"],
-        assignee_id=payload.get("assignee_id"),
+        assignee_id=payload.assignee_id,
     )
     db.add(task)
     db.commit()
@@ -103,15 +101,7 @@ def create_task(project_id: int, payload: dict, current_user=Depends(get_current
             "title": task.title,
         },
     )
-    return {
-        "id": task.id,
-        "title": task.title,
-        "description": task.description,
-        "project_id": task.project_id,
-        "creator_id": task.creator_id,
-        "assignee_id": task.assignee_id,
-        "status": task.status,
-    }
+    return TaskOut.from_orm(task)
 
 
 @app.get("/projects/{project_id}/tasks", response_model=list[dict])
