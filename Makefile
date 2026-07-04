@@ -1,8 +1,10 @@
-.PHONY: up down build test logs
+.PHONY: up up-scale down build test logs
 
 up:
 	docker compose up -d --build
 
+up-scale:
+	docker compose up -d --build --scale identity=2 --scale project=2 --scale task=2
 down:
 	docker compose down -v
 build:

@@ -16,7 +16,12 @@ from app.core.database import SessionLocal, Task, initialize
 
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
 
-app = FastAPI(title="Task Service")
+app = FastAPI(
+    title="Task Service",
+    docs_url="/tasks/docs",
+    redoc_url=None,
+    openapi_url="/tasks/openapi.json",
+)
 
 
 def get_db():

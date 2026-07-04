@@ -3,8 +3,8 @@ services:
     build:
       context: ./services
       dockerfile: ./identity/Dockerfile
-    ports:
-      - "8001:8000"
+    expose:
+      - "8000"
     environment:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/task_manager_identity
       JWT_SECRET: dev-secret
@@ -17,17 +17,30 @@ services:
       SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-no-reply@taskmanager.local}"
       SMTP_FROM_NAME: "${SMTP_FROM_NAME:-Task Manager}"
     depends_on:
-      - db
-      - redis
-      - rabbitmq
-      - mailhog
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+      mailhog:
+        condition: service_started
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   project:
     build:
       context: ./services
       dockerfile: ./project/Dockerfile
-    ports:
-      - "8002:8000"
+    expose:
+      - "8000"
     environment:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/task_manager_project
       IDENTITY_SERVICE_URL: http://identity:8000
@@ -41,18 +54,32 @@ services:
       SMTP_USE_TLS: "${SMTP_USE_TLS:-false}"
       SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-no-reply@taskmanager.local}"
     depends_on:
-      - db
-      - redis
-      - rabbitmq
-      - identity
-      - mailhog
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+      identity:
+        condition: service_started
+      mailhog:
+        condition: service_started
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   task:
     build:
       context: ./services
       dockerfile: ./task/Dockerfile
-    ports:
-      - "8003:8000"
+    expose:
+      - "8000"
     environment:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/task_manager_task
       IDENTITY_SERVICE_URL: http://identity:8000
@@ -60,11 +87,39 @@ services:
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_HOST: rabbitmq
     depends_on:
-      - db
-      - redis
-      - rabbitmq
-      - identity
-      - project
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+      identity:
+        condition: service_started
+      project:
+        condition: service_started
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      identity:
+        condition: service_healthy
+      project:
+        condition: service_healthy
+      task:
+        condition: service_healthy
 
   db:
     image: postgres:16

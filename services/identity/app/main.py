@@ -1,10 +1,12 @@
 import smtplib
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from pydantic import BaseModel
 from passlib.context import CryptContext
 from redis import Redis
 from sqlalchemy.orm import Session
@@ -14,12 +16,21 @@ from .core.database import SessionLocal, User, initialize
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-app = FastAPI(title="Identity Service")
+app = FastAPI(
+    title="Identity Service",
+    docs_url="/auth/docs",
+    redoc_url=None,
+    openapi_url="/auth/openapi.json",
+)
 security_scheme = HTTPBearer(auto_error=False)
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
 
 RATE_LIMIT_MAX = 5
 RATE_LIMIT_WINDOW_SECONDS = 120
+
+
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str
 
 
 def get_db():
@@ -158,9 +169,12 @@ def register(
             "View it in MailHog at http://127.0.0.1:8025."
         )
 
+    refresh_token = create_refresh_token(user)
     return {
         "access_token": token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
+        "expires_in": Settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "message": message,
     }
 
@@ -187,11 +201,42 @@ def login(
     if not pwd_context.verify(password, user.hashed_password):
         raise HTTPException(status_code=401, detail="The password is incorrect")
 
-    token = create_access_token(user)
+    access_token = create_access_token(user)
+    refresh_token = create_refresh_token(user)
     return {
-        "access_token": token,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
+        "expires_in": Settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "username": user.username,
+    }
+
+
+@app.post("/auth/refresh", response_model=dict)
+def refresh_access_token(
+    request_data: TokenRefreshRequest,
+    db: Session = Depends(get_db),
+):
+    refresh_token_value = request_data.refresh_token.strip() if request_data.refresh_token else ""
+    if not refresh_token_value:
+        raise HTTPException(status_code=400, detail="Refresh token is required")
+
+    payload = decode_token(refresh_token_value, expected_type="refresh")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = db.get(User, int(user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    new_access_token = create_access_token(user)
+    new_refresh_token = create_refresh_token(user)
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "expires_in": Settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
 
 
@@ -202,10 +247,7 @@ def get_current_admin_user(
     if not credentials:
         raise HTTPException(status_code=401, detail="Authorization header is required")
 
-    try:
-        payload = jwt.decode(credentials.credentials, Settings.JWT_SECRET, algorithms=[Settings.JWT_ALGORITHM])
-    except JWTError as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+    payload = decode_token(credentials.credentials, expected_type="access")
 
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required")
@@ -264,10 +306,7 @@ def validate_token(payload: dict):
     if not token:
         raise HTTPException(status_code=401, detail="token required")
 
-    try:
-        decoded = jwt.decode(token, Settings.JWT_SECRET, algorithms=[Settings.JWT_ALGORITHM])
-    except JWTError as exc:
-        raise HTTPException(status_code=401, detail="invalid token") from exc
+    decoded = decode_token(token)
 
     user_id = decoded.get("sub")
     if not user_id:
@@ -276,6 +315,34 @@ def validate_token(payload: dict):
     return {"user_id": int(user_id), "email": decoded.get("email", ""), "role": decoded.get("role", "member")}
 
 
+def decode_token(token: str, expected_type: Optional[str] = None) -> dict[str, Any]:
+    try:
+        payload = jwt.decode(token, Settings.JWT_SECRET, algorithms=[Settings.JWT_ALGORITHM])
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+
+    if expected_type and payload.get("type") != expected_type:
+        raise HTTPException(status_code=401, detail="Invalid token type")
+
+    return payload
+
+
 def create_access_token(user: User) -> str:
-    payload = {"sub": str(user.id), "email": user.email, "role": user.role}
+    return create_token(user, "access", timedelta(minutes=Settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
+
+
+def create_refresh_token(user: User) -> str:
+    return create_token(user, "refresh", timedelta(days=Settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS))
+
+
+def create_token(user: User, token_type: str, expires_delta: timedelta) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "type": token_type,
+        "iat": int(now.timestamp()),
+        "exp": int((now + expires_delta).timestamp()),
+    }
     return jwt.encode(payload, Settings.JWT_SECRET, algorithm=Settings.JWT_ALGORITHM)

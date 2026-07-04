@@ -62,6 +62,7 @@ def test_register_accepts_email_and_username():
     assert response.status_code == 200
     payload = response.json()
     assert "access_token" in payload
+    assert "refresh_token" in payload
 
     with SessionLocal() as db:
         saved = db.query(User).filter(User.email == "alice@example.com").one()
@@ -104,6 +105,39 @@ def test_login_returns_username_in_payload():
     assert response.status_code == 200
     payload = response.json()
     assert payload["username"] == "bob"
+    assert "refresh_token" in payload
+
+
+def test_refresh_token_returns_new_access_token():
+    client, SessionLocal = make_client()
+
+    with SessionLocal() as db:
+        user = User(
+            email="carol@example.com",
+            username="carol",
+            full_name="Carol Smith",
+            hashed_password=identity_main.pwd_context.hash("secret123"),
+            role="member",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    login_response = client.post(
+        "/auth/login",
+        data={"username": "carol", "password": "secret123"},
+    )
+    refresh_token = login_response.json()["refresh_token"]
+
+    refresh_response = client.post(
+        "/auth/refresh",
+        json={"refresh_token": refresh_token},
+    )
+
+    assert refresh_response.status_code == 200
+    payload = refresh_response.json()
+    assert "access_token" in payload
+    assert "refresh_token" in payload
 
 
 def test_login_is_rate_limited_after_five_requests():
