@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .core.config import Settings
 from .core.database import SessionLocal, User, initialize
+from common.observability import setup_observability
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -24,6 +25,7 @@ app = FastAPI(
 )
 security_scheme = HTTPBearer(auto_error=False)
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
+setup_observability(app, "identity")
 
 RATE_LIMIT_MAX = 5
 RATE_LIMIT_WINDOW_SECONDS = 120

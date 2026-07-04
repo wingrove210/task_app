@@ -13,6 +13,7 @@ from common.exceptions import NotFoundError, ValidationError
 from common.models import TaskPriority, TaskResponse, TaskStatus
 from app.core.config import Settings
 from app.core.database import SessionLocal, Task, initialize
+from common.observability import setup_observability
 
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
 
@@ -22,6 +23,7 @@ app = FastAPI(
     redoc_url=None,
     openapi_url="/tasks/openapi.json",
 )
+setup_observability(app, "task")
 
 
 def get_db():

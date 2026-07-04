@@ -20,11 +20,20 @@ from common.models import (
     ProjectUpdateRequest,
 )
 from app.core.config import Settings
-from app.core.database import Project, ProjectInvitation, ProjectMember, SessionLocal, initialize
+from app.core.database import (
+    Project,
+    ProjectInvitation,
+    ProjectMember,
+    SessionLocal,
+    get_project_with_members,
+    initialize,
+)
+from common.observability import setup_observability
 
 redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
 
 app = FastAPI(title="Project Service")
+setup_observability(app, "project")
 
 
 def get_db():
@@ -227,7 +236,8 @@ def list_collaborators(
     project = get_project_or_404(db, project_id)
     ensure_project_access(db, project, current_user["user_id"])
 
-    members = db.query(ProjectMember).filter(ProjectMember.project_id == project_id).all()
+    project_with_members = get_project_with_members(db, project_id)
+    members = project_with_members.members if project_with_members else []
     return [
         {
             "id": member.id,

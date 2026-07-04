@@ -1,0 +1,49 @@
+{
+  "uid": "api-observability",
+  "title": "API Observability",
+  "version": 1,
+  "schemaVersion": 37,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Requests per Second (by service)",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[1m])) by (service)",
+          "legendFormat": "{{service}}",
+          "refId": "A",
+          "datasource": "Prometheus"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "P95 Latency (s)",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service))",
+          "legendFormat": "{{service}}",
+          "refId": "A",
+          "datasource": "Prometheus"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "label": "Service",
+        "query": "label_values(http_requests_total, service)",
+        "datasource": "Prometheus",
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "refresh": "5s",
+  "time": {"from": "now-1h", "to": "now"}
+}
