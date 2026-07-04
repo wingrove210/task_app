@@ -3,8 +3,6 @@ import smtplib
 import uuid
 from datetime import datetime, timedelta
 from email.message import EmailMessage
-from typing import Optional
-
 from fastapi import Depends, FastAPI, Form, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis import Redis
@@ -17,9 +15,7 @@ from common.exceptions import AuthorizationError, ConflictError, NotFoundError, 
 from common.models import (
     ProjectCollaboratorResponse,
     ProjectCollaboratorRole,
-    ProjectCollaboratorUpdateRequest,
     ProjectCreateRequest,
-    ProjectInviteRequest,
     ProjectResponse,
     ProjectUpdateRequest,
 )

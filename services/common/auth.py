@@ -49,23 +49,3 @@ def get_current_user(
 
     except httpx.RequestError as exc:
         raise AuthenticationError("Failed to validate token") from exc
-
-
-def extract_token_from_header(auth_header: Optional[str]) -> Optional[str]:
-    """
-    Extract token from Authorization header.
-
-    Args:
-        auth_header: Authorization header value (e.g., "Bearer token_string")
-
-    Returns:
-        Token string or None if not present or malformed
-    """
-    if not auth_header:
-        return None
-
-    parts = auth_header.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        return None
-
-    return parts[1]

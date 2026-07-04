@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from common.auth import get_current_user
 from common.events import publish_event
 from common.exceptions import NotFoundError, ValidationError
-from common.models import TaskCreateRequest, TaskPriority, TaskResponse, TaskStatus, TaskUpdateRequest
+from common.models import TaskPriority, TaskResponse, TaskStatus
 from app.core.config import Settings
 from app.core.database import SessionLocal, Task, initialize
 

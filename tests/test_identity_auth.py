@@ -13,6 +13,23 @@ from identity.app.core import database as identity_db
 from identity.app.core.database import User
 
 
+class DummyRedis:
+    def __init__(self):
+        self._store = {}
+        self._expirations = {}
+
+    def incr(self, key):
+        self._store[key] = self._store.get(key, 0) + 1
+        return self._store[key]
+
+    def expire(self, key, seconds):
+        self._expirations[key] = seconds
+        return True
+
+    def ttl(self, key):
+        return self._expirations.get(key, -1)
+
+
 def make_client():
     engine = create_engine(
         "sqlite:///:memory:",
@@ -23,6 +40,7 @@ def make_client():
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
     identity_main.SessionLocal = SessionLocal
     identity_main.initialize = lambda: None
+    identity_main.redis_client = DummyRedis()
 
     client = TestClient(identity_main.app)
     return client, SessionLocal
@@ -86,6 +104,52 @@ def test_login_returns_username_in_payload():
     assert response.status_code == 200
     payload = response.json()
     assert payload["username"] == "bob"
+
+
+def test_login_is_rate_limited_after_five_requests():
+    client, _ = make_client()
+
+    for _ in range(5):
+        response = client.post(
+            "/auth/login",
+            data={"username": "missing", "password": "secret123"},
+        )
+        assert response.status_code == 404
+
+    response = client.post(
+        "/auth/login",
+        data={"username": "missing", "password": "secret123"},
+    )
+
+    assert response.status_code == 429
+    assert "too many requests" in response.json()["detail"].lower()
+
+
+def test_register_is_rate_limited_after_five_requests():
+    client, _ = make_client()
+
+    for index in range(5):
+        response = client.post(
+            "/auth/register",
+            data={
+                "email": f"user{index}@example.com",
+                "username": f"user{index}",
+                "password": "secret123",
+            },
+        )
+        assert response.status_code == 200
+
+    response = client.post(
+        "/auth/register",
+        data={
+            "email": "user5@example.com",
+            "username": "user5",
+            "password": "secret123",
+        },
+    )
+
+    assert response.status_code == 429
+    assert "too many requests" in response.json()["detail"].lower()
 
 
 def test_admin_can_delete_user():

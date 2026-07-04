@@ -16,3 +16,4 @@ class Settings:
     SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "no-reply@taskmanager.local")
     SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Task Manager")
     APP_NAME = os.getenv("APP_NAME", "Task Manager")
+    REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")

@@ -2,11 +2,11 @@ import smtplib
 from email.message import EmailMessage
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Security
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import or_
+from redis import Redis
 from sqlalchemy.orm import Session
 
 from .core.config import Settings
@@ -16,6 +16,10 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 app = FastAPI(title="Identity Service")
 security_scheme = HTTPBearer(auto_error=False)
+redis_client = Redis.from_url(Settings.REDIS_URL, decode_responses=True)
+
+RATE_LIMIT_MAX = 5
+RATE_LIMIT_WINDOW_SECONDS = 120
 
 
 def get_db():
@@ -24,6 +28,26 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_rate_limit_key(endpoint: str, identifier: str) -> str:
+    return f"rate_limit:{endpoint}:{identifier}"
+
+
+def enforce_rate_limit(request: Request, endpoint: str) -> None:
+    remote_addr = request.client.host if request.client else "unknown"
+    key = get_rate_limit_key(endpoint, remote_addr)
+    count = redis_client.incr(key)
+    if count == 1:
+        redis_client.expire(key, RATE_LIMIT_WINDOW_SECONDS)
+
+    if count > RATE_LIMIT_MAX:
+        ttl = redis_client.ttl(key)
+        retry_seconds = ttl if ttl and ttl > 0 else RATE_LIMIT_WINDOW_SECONDS
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many requests. Try again in {retry_seconds} seconds.",
+        )
 
 
 @app.on_event("startup")
@@ -85,12 +109,14 @@ def send_welcome_email(email: str, username: str) -> bool:
 
 @app.post("/auth/register", response_model=dict)
 def register(
+    request: Request,
     email: str = Form(...),
     username: str = Form(...),
     password: str = Form(...),
     full_name: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
+    enforce_rate_limit(request, "register")
     normalized_email = email.strip().lower()
     normalized_username = username.strip().lower()
 
@@ -141,10 +167,12 @@ def register(
 
 @app.post("/auth/login", response_model=dict)
 def login(
+    request: Request,
     username: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    enforce_rate_limit(request, "login")
     candidate = username.strip().lower()
     if not candidate:
         raise HTTPException(status_code=400, detail="Username is required")

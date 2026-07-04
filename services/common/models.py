@@ -90,16 +90,6 @@ class ProjectCollaboratorRole(str, Enum):
     ADMIN = "admin"
 
 
-class ProjectInviteRequest(BaseModel):
-    """Request model for inviting a collaborator to a project."""
-
-    email: str = Field(..., description="Email address of the collaborator")
-    role: ProjectCollaboratorRole = Field(
-        default=ProjectCollaboratorRole.EDITOR,
-        description="Initial role for the collaborator",
-    )
-
-
 class ProjectCollaboratorResponse(BaseModel):
     """Response model for a project collaborator."""
 
@@ -111,90 +101,6 @@ class ProjectCollaboratorResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class ProjectCollaboratorUpdateRequest(BaseModel):
-    """Request model for updating a collaborator role."""
-
-    role: ProjectCollaboratorRole = Field(..., description="Updated collaborator role")
-
-
-class TaskCreateRequest(BaseModel):
-    """Request model for creating a task."""
-
-    title: str = Field(
-        ...,
-        min_length=1,
-        max_length=500,
-        description="Task title",
-    )
-    description: Optional[str] = Field(
-        default=None,
-        max_length=5000,
-        description="Task description or details",
-    )
-    status: Optional[TaskStatus] = Field(
-        default=TaskStatus.TODO,
-        description="Task status",
-    )
-    priority: Optional[TaskPriority] = Field(
-        default=TaskPriority.MEDIUM,
-        description="Task priority level",
-    )
-    assignee_id: Optional[int] = Field(
-        default=None,
-        gt=0,
-        description="ID of assigned user (optional)",
-    )
-
-    class Config:
-        examples = [
-            {
-                "title": "Implement authentication",
-                "description": "Add JWT-based authentication to the API",
-                "status": "in_progress",
-                "priority": "high",
-                "assignee_id": 1,
-            }
-        ]
-
-
-class TaskUpdateRequest(BaseModel):
-    """Request model for updating a task."""
-
-    title: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        max_length=500,
-        description="Updated task title",
-    )
-    description: Optional[str] = Field(
-        default=None,
-        max_length=5000,
-        description="Updated task description",
-    )
-    status: Optional[TaskStatus] = Field(
-        default=None,
-        description="Updated task status",
-    )
-    priority: Optional[TaskPriority] = Field(
-        default=None,
-        description="Updated task priority",
-    )
-    assignee_id: Optional[int] = Field(
-        default=None,
-        gt=0,
-        description="Updated assignee ID (optional)",
-    )
-
-    class Config:
-        examples = [
-            {
-                "title": "Updated task title",
-                "status": "done",
-                "priority": "medium",
-            }
-        ]
 
 
 class TaskResponse(BaseModel):
